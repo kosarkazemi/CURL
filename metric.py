@@ -25,7 +25,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 class Evaluator():
 
-    def __init__(self, criterion, data_loader, split_name, log_dirpath):
+    def __init__(self, criterion, data_loader, split_name, log_dirpath, device):
         """Initialisation function for the data loader
         :param data_dirpath: directory containing the data
         :param img_ids_filepath: file containing the ids of the images to load
@@ -37,6 +37,7 @@ class Evaluator():
         self.data_loader = data_loader
         self.split_name = split_name
         self.log_dirpath = log_dirpath
+        self.device = device
 
     def evaluate(self, net, epoch=0):
         """Evaluates a network on a specified split of a dataset e.g. test, validation
@@ -61,14 +62,15 @@ class Evaluator():
 
         # switch model to evaluation mode
         net.eval()
-        net.cuda()
+        net.to(self.device)
 
         with torch.no_grad():
 
             for batch_num, data in enumerate(self.data_loader, 0):
 
-                input_img_batch, output_img_batch, name = Variable(data['input_img'], requires_grad=False).cuda(), Variable(data['output_img'],
-                                                                                                   requires_grad=False).cuda(), data['name']
+                input_img_batch = data['input_img'].to(self.device)
+                output_img_batch = data['output_img'].to(self.device)
+                name = data['name']
                 input_img_batch = input_img_batch.unsqueeze(0)
 
                 for i in range(0, input_img_batch.shape[0]):
@@ -82,32 +84,23 @@ class Evaluator():
                         net_output_img_example=net_output_img_example.transpose(2,3)
 
                     loss = self.criterion(net_output_img_example[:, 0:3, :, :],
-                                          output_img_batch[:, 0:3, :, :],0)
+                                        output_img_batch[:, 0:3, :, :],0)
 
                     input_img_example = (input_img_batch.cpu(
                     ).data[0, 0:3, :, :].numpy() * 255).astype('uint8')
 
-                    output_img_batch_numpy = output_img_batch.squeeze(
-                        0).data.cpu().numpy()
-                    output_img_batch_numpy = ImageProcessing.swapimdims_3HW_HW3(
-                        output_img_batch_numpy)
+                    output_img_batch_numpy = output_img_batch.squeeze(0).data.cpu().numpy()
+                    output_img_batch_numpy = ImageProcessing.swapimdims_3HW_HW3(output_img_batch_numpy)
                     output_img_batch_rgb = output_img_batch_numpy
-                    output_img_batch_rgb = ImageProcessing.swapimdims_HW3_3HW(
-                        output_img_batch_rgb)
-                    output_img_batch_rgb = np.expand_dims(
-                        output_img_batch_rgb, axis=0)
+                    output_img_batch_rgb = ImageProcessing.swapimdims_HW3_3HW(output_img_batch_rgb)
+                    output_img_batch_rgb = np.expand_dims(output_img_batch_rgb, axis=0)
 
-                    net_output_img_example_numpy = net_output_img_example.squeeze(
-                        0).data.cpu().numpy()
-                    net_output_img_example_numpy = ImageProcessing.swapimdims_3HW_HW3(
-                        net_output_img_example_numpy)
+                    net_output_img_example_numpy = net_output_img_example.squeeze(0).data.cpu().numpy()
+                    net_output_img_example_numpy = ImageProcessing.swapimdims_3HW_HW3(net_output_img_example_numpy)
                     net_output_img_example_rgb = net_output_img_example_numpy
-                    net_output_img_example_rgb = ImageProcessing.swapimdims_HW3_3HW(
-                        net_output_img_example_rgb)
-                    net_output_img_example_rgb = np.expand_dims(
-                        net_output_img_example_rgb, axis=0)
-                    net_output_img_example_rgb = np.clip(
-                        net_output_img_example_rgb, 0, 1)
+                    net_output_img_example_rgb = ImageProcessing.swapimdims_HW3_3HW(net_output_img_example_rgb)
+                    net_output_img_example_rgb = np.expand_dims(net_output_img_example_rgb, axis=0)
+                    net_output_img_example_rgb = np.clip(net_output_img_example_rgb, 0, 1)
 
                     running_loss += loss.data[0]
                     examples += batch_size
@@ -120,9 +113,7 @@ class Evaluator():
 
                     psnr_avg += psnr_example
                     ssim_avg += ssim_example
-                    
-                    print(examples)
-                    print(loss)
+
                     if batch_num > 30:
                         '''
                         We save only the first 30 images down for time saving
@@ -148,8 +139,6 @@ class Evaluator():
                     del input_img_example
                     del output_img_batch
 
-        print(num_batches)
-        print(examples)
         psnr_avg = psnr_avg / num_batches
         ssim_avg = ssim_avg / num_batches
 

@@ -26,7 +26,7 @@ np.set_printoptions(threshold=sys.maxsize)
 class ImageProcessing(object):
 
     @staticmethod
-    def rgb_to_lab(img, is_training=True):
+    def rgb_to_lab(img, is_training=True, device='cpu'):
         """ PyTorch implementation of RGB to LAB conversion: https://docs.opencv.org/3.3.0/de/d25/imgproc_color_conversions.html
         Based roughly on a similar implementation here: https://github.com/affinelayer/pix2pix-tensorflow/blob/master/pix2pix.py
         :param img: image to be adjusted
@@ -47,11 +47,11 @@ class ImageProcessing(object):
             [0.357580, 0.715160, 0.119193],  # G
             [0.180423, 0.072169,
              0.950227],  # B
-        ]), requires_grad=False).cuda()
+        ]), requires_grad=False).to(device)
 
         img = torch.matmul(img, rgb_to_xyz)
         img = torch.mul(img, Variable(torch.FloatTensor(
-            [1/0.950456, 1.0, 1/1.088754]), requires_grad=False).cuda())
+            [1/0.950456, 1.0, 1/1.088754]), requires_grad=False).to(device))
 
         epsilon = 6/29
 
@@ -64,10 +64,10 @@ class ImageProcessing(object):
                                                     [116.0, -500.0,  200.0],
                                                     # fz
                                                     [0.0,    0.0, -200.0],
-                                                    ]), requires_grad=False).cuda()
+                                                    ]), requires_grad=False).to(device)
 
         img = torch.matmul(img, fxfyfz_to_lab) + Variable(
-            torch.FloatTensor([-16.0, 0.0, 0.0]), requires_grad=False).cuda()
+            torch.FloatTensor([-16.0, 0.0, 0.0]), requires_grad=False).to(device)
 
         img = img.view(shape)
         img = img.permute(2, 1, 0)
@@ -85,10 +85,10 @@ class ImageProcessing(object):
 
         img = img.contiguous()
 
-        return img.cuda()
+        return img.to(device)
 
     @staticmethod
-    def lab_to_rgb(img, is_training=True):
+    def lab_to_rgb(img, is_training=True, device='cpu'):
         """ PyTorch implementation of LAB to RGB conversion: https://docs.opencv.org/3.3.0/de/d25/imgproc_color_conversions.html
         Based roughly on a similar implementation here: https://github.com/affinelayer/pix2pix-tensorflow/blob/master/pix2pix.py
         :param img: image to be adjusted
@@ -105,17 +105,19 @@ class ImageProcessing(object):
         img_copy[:, 1] = ((img[:, 1] * 2)-1)*110
         img_copy[:, 2] = ((img[:, 2] * 2)-1)*110
 
-        img = img_copy.clone().cuda()
+        img = img_copy.clone().to(device)
         del img_copy
 
         lab_to_fxfyfz = Variable(torch.FloatTensor([  # X Y Z
             [1/116.0, 1/116.0, 1/116.0],  # R
             [1/500.0, 0, 0],  # G
             [0, 0, -1/200.0],  # B
-        ]), requires_grad=False).cuda()
+        ]), requires_grad=False).to(device)
 
         img = torch.matmul(
-            img + Variable(torch.cuda.FloatTensor([16.0, 0.0, 0.0])), lab_to_fxfyfz)
+            img + torch.tensor([16.0, 0.0, 0.0]).to(device),### Variable(torch.cuda.FloatTensor([16.0, 0.0, 0.0])), 
+            lab_to_fxfyfz
+            )
 
         epsilon = 6.0/29.0
 
@@ -123,14 +125,16 @@ class ImageProcessing(object):
                ((torch.clamp(img, min=0.0001)**3.0) * img.gt(epsilon).float()))
 
         # denormalize for D65 white point
-        img = torch.mul(img, Variable(
-            torch.cuda.FloatTensor([0.950456, 1.0, 1.088754])))
+        img = torch.mul(
+            img,
+            torch.tensor([0.950456, 1.0, 1.088754]).to(device) ### Variable(torch.cuda.FloatTensor([0.950456, 1.0, 1.088754]))
+            )
 
         xyz_to_rgb = Variable(torch.FloatTensor([  # X Y Z
             [3.2404542, -0.9692660,  0.0556434],  # R
             [-1.5371385,  1.8760108, -0.2040259],  # G
             [-0.4985314,  0.0415560,  1.0572252],  # B
-        ]), requires_grad=False).cuda()
+        ]), requires_grad=False).to(device)
 
         img = torch.matmul(img, xyz_to_rgb)
 
@@ -176,7 +180,7 @@ class ImageProcessing(object):
             return np.swapaxes(np.swapaxes(img, 1, 3), 2, 3)
 
     @staticmethod
-    def load_image(img_filepath, normaliser):
+    def load_image(img_filepath, normaliser, resize=True, resize_width=200):
         """Loads an image from file as a numpy multi-dimensional array
 
         :param img_filepath: filepath to the image
@@ -184,8 +188,35 @@ class ImageProcessing(object):
         :rtype: multi-dimensional numpy array
 
         """
-        img = ImageProcessing.normalise_image(np.array(Image.open(img_filepath)), normaliser)  # NB: imread normalises to 0-1
-        return img
+        img = Image.open(img_filepath)
+
+        if resize:
+            img_downscaled = ImageProcessing.resize_image(img, resize_width=resize_width)
+        else:
+            img_downscaled = img
+
+        img = ImageProcessing.normalise_image(np.array(img), normaliser)  # NB: imread normalises to 0-1
+        img_downscaled = ImageProcessing.normalise_image(np.array(img_downscaled), normaliser)
+
+        return img_downscaled, img
+
+    @staticmethod
+    def resize_image(img, resize_width):
+        """Resizr the image keping the height and width ratio
+
+        :param img: PIL image
+        :param down_width: The desired with of the resized image
+        :returns: Resized image
+        :rtype: PIL image
+
+        """
+        width, height = img.size
+        if width < resize_width :
+            return img
+        else:
+            resize_height = int((height/width) * resize_width)
+            img_downscaled = img.resize((resize_width, resize_height))
+            return img_downscaled
 
     @staticmethod
     def normalise_image(img, normaliser):
@@ -231,7 +262,7 @@ class ImageProcessing(object):
             imageB = np.maximum(0, np.minimum(imageB, max_intensity))
             psnr_val += 10 * \
                 np.log10(max_intensity ** 2 /
-                         ImageProcessing.compute_mse(imageA, imageB))
+                        ImageProcessing.compute_mse(imageA, imageB))
 
         return psnr_val / num_images
 
@@ -255,7 +286,7 @@ class ImageProcessing(object):
             imageB = ImageProcessing.swapimdims_3HW_HW3(
                 image_batchB[i, 0:3, :, :])
             ssim_val += ssim(imageA, imageB, data_range=imageA.max() - imageA.min(), multichannel=True,
-                             gaussian_weights=True, win_size=11)
+                            gaussian_weights=True, win_size=11)
 
         return ssim_val / num_images
 
@@ -310,7 +341,7 @@ class ImageProcessing(object):
 
 
     @staticmethod
-    def rgb_to_hsv(img):
+    def rgb_to_hsv(img, device='cpu'):
         """Converts an RGB image to HSV
         PyTorch implementation of RGB to HSV conversion: https://docs.opencv.org/3.3.0/de/d25/imgproc_color_conversions.html
         Based roughly on a similar implementation here: http://code.activestate.com/recipes/576919-python-rgb-and-hsv-conversion/
@@ -332,8 +363,8 @@ class ImageProcessing(object):
         mn = torch.min(img, 1)[0]
 
         ones = Variable(torch.FloatTensor(
-            torch.ones((img.shape[0])))).cuda()
-        zero = Variable(torch.FloatTensor(torch.zeros(shape[0:2]))).cuda()
+            torch.ones((img.shape[0])))).to(device)
+        zero = Variable(torch.FloatTensor(torch.zeros(shape[0:2]))).to(device)
 
         img = img.view(shape)
 
@@ -353,13 +384,13 @@ class ImageProcessing(object):
         df = df.view(shape[0:2])+1e-10
         mx = mx.view(shape[0:2])
 
-        img = img.cuda()
-        df = df.cuda()
-        mx = mx.cuda()
+        img = img.to(device)
+        df = df.to(device)
+        mx = mx.to(device)
 
-        g = img[:, :, 1].clone().cuda()
-        b = img[:, :, 2].clone().cuda()
-        r = img[:, :, 0].clone().cuda()
+        g = img[:, :, 1].clone().to(device)
+        b = img[:, :, 2].clone().to(device)
+        r = img[:, :, 0].clone().to(device)
 
         img_copy = img.clone()
         
@@ -367,7 +398,7 @@ class ImageProcessing(object):
                          * g.eq(mx).float() + (4.0+(r-g)/df)*b.eq(mx).float())
         img_copy[:, :, 0] = img_copy[:, :, 0]*60.0
 
-        zero = zero.cuda()
+        zero = zero.to(device)
         img_copy2 = img_copy.clone()
 
         img_copy2[:, :, 0] = img_copy[:, :, 0].lt(zero).float(
@@ -393,7 +424,7 @@ class ImageProcessing(object):
     
     @staticmethod
     def apply_curve(img, C, slope_sqr_diff, channel_in, channel_out,
-    clamp=False):
+    clamp=False, device='cpu'):
         """Applies a peicewise linear curve defined by a set of knot points to
         an image channel
 
@@ -403,7 +434,7 @@ class ImageProcessing(object):
         :rtype: Tensor
 
         """
-        slope = Variable(torch.zeros((C.shape[0]-1))).cuda()
+        slope = Variable(torch.zeros((C.shape[0]-1))).to(device)
         curve_steps = C.shape[0]-1
 
         '''
@@ -429,7 +460,7 @@ class ImageProcessing(object):
                 scale += float(slope[i])*(img[:, :,channel_in]*curve_steps-i)
                 
         img_copy = img.clone()
-  
+
         img_copy[:, :, channel_out] = img[:, :, channel_out]*scale
         
         img_copy = torch.clamp(img_copy,0,1)
@@ -437,7 +468,7 @@ class ImageProcessing(object):
         return img_copy, slope_sqr_diff
 
     @staticmethod
-    def adjust_hsv(img, S):
+    def adjust_hsv(img, S, device='cpu'):
         """Adjust the HSV channels of a HSV image using learnt curves
 
         :param img: image to be adjusted 
@@ -455,31 +486,31 @@ class ImageProcessing(object):
         S3 = torch.exp(S[(int(S.shape[0]/4)*2):(int(S.shape[0]/4)*3)])
         S4 = torch.exp(S[(int(S.shape[0]/4)*3):(int(S.shape[0]/4)*4)])
 
-        slope_sqr_diff = Variable(torch.zeros(1)*0.0).cuda()
+        slope_sqr_diff = Variable(torch.zeros(1)*0.0).to(device)
 
         '''
         Adjust Hue channel based on Hue using the predicted curve
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img, S1, slope_sqr_diff, channel_in=0, channel_out=0)
+            img, S1, slope_sqr_diff, channel_in=0, channel_out=0, device=device)
 
         '''
         Adjust Saturation channel based on Hue using the predicted curve
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img_copy, S2, slope_sqr_diff, channel_in=0, channel_out=1)
+            img_copy, S2, slope_sqr_diff, channel_in=0, channel_out=1, device=device)
         
         '''
         Adjust Saturation channel based on Saturation using the predicted curve
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img_copy, S3, slope_sqr_diff, channel_in=1, channel_out=1)
+            img_copy, S3, slope_sqr_diff, channel_in=1, channel_out=1, device=device)
 
         '''
         Adjust Value channel based on Value using the predicted curve
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img_copy, S4, slope_sqr_diff, channel_in=2, channel_out=2)
+            img_copy, S4, slope_sqr_diff, channel_in=2, channel_out=2, device=device)
 
         img = img_copy.clone()
         del img_copy
@@ -492,11 +523,11 @@ class ImageProcessing(object):
         return img, slope_sqr_diff
 
     @staticmethod
-    def adjust_rgb(img, R):
+    def adjust_rgb(img, R, device='cpu'):
         """Adjust the RGB channels of a RGB image using learnt curves
 
         :param img: image to be adjusted 
-        :param S: predicted parameters of piecewise linear curves
+        :param R: predicted parameters of piecewise linear curves
         :returns: adjust image, regularisation term
         :rtype: Tensor, float
 
@@ -515,22 +546,22 @@ class ImageProcessing(object):
         '''
         Apply the curve to the R channel 
         '''
-        slope_sqr_diff = Variable(torch.zeros(1)*0.0).cuda()
+        slope_sqr_diff = Variable(torch.zeros(1)*0.0).to(device)
 
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img, R1, slope_sqr_diff, channel_in=0, channel_out=0)
+            img, R1, slope_sqr_diff, channel_in=0, channel_out=0, device=device)
 
         '''
         Apply the curve to the G channel 
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img_copy, R2, slope_sqr_diff, channel_in=1, channel_out=1)
+            img_copy, R2, slope_sqr_diff, channel_in=1, channel_out=1, device=device)
 
         '''
         Apply the curve to the B channel 
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img_copy, R3, slope_sqr_diff, channel_in=2, channel_out=2)
+            img_copy, R3, slope_sqr_diff, channel_in=2, channel_out=2, device=device)
 
         img = img_copy.clone()
         del img_copy
@@ -543,7 +574,7 @@ class ImageProcessing(object):
         return img, slope_sqr_diff
 
     @staticmethod
-    def adjust_lab(img, L):
+    def adjust_lab(img, L, device='cpu'):
         """Adjusts the image in LAB space using the predicted curves
 
         :param img: Image tensor
@@ -564,25 +595,25 @@ class ImageProcessing(object):
         L2 = torch.exp(L[(int(L.shape[0]/3)):(int(L.shape[0]/3)*2)])
         L3 = torch.exp(L[(int(L.shape[0]/3)*2):(int(L.shape[0]/3)*3)])
 
-        slope_sqr_diff = Variable(torch.zeros(1)*0.0).cuda()
+        slope_sqr_diff = Variable(torch.zeros(1)*0.0).to(device)
 
         '''
         Apply the curve to the L channel 
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img, L1, slope_sqr_diff, channel_in=0, channel_out=0)
+            img, L1, slope_sqr_diff, channel_in=0, channel_out=0, device=device)
 
         '''
         Now do the same for the a channel
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img_copy, L2, slope_sqr_diff, channel_in=1, channel_out=1)
+            img_copy, L2, slope_sqr_diff, channel_in=1, channel_out=1, device=device)
 
         '''
         Now do the same for the b channel
         '''
         img_copy, slope_sqr_diff = ImageProcessing.apply_curve(
-            img_copy, L3, slope_sqr_diff, channel_in=2, channel_out=2)
+            img_copy, L3, slope_sqr_diff, channel_in=2, channel_out=2, device=device)
 
         img = img_copy.clone()
         del img_copy

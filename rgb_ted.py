@@ -296,6 +296,6 @@ class TEDModel(nn.Module):
         :rtype: Tensor
 
         """
-        output_img= self.ted(img.float())
-
-        return self.final_conv(self.refpad(output_img))
+        output_img = self.ted(img.float())
+        output_img = self.final_conv(self.refpad(output_img))
+        return output_img

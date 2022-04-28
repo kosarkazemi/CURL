@@ -17,8 +17,8 @@ import sys
 import torch
 import torch.nn as nn
 from collections import defaultdict
-import rgb_ted
-from util import ImageProcessing
+from . import rgb_ted
+from .util import ImageProcessing
 from torch.autograd import Variable
 import math
 from math import exp
@@ -29,7 +29,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 class CURLLoss(nn.Module):
 
-    def __init__(self, ssim_window_size=5, alpha=0.5):
+    def __init__(self, device='cpu', ssim_window_size=5, alpha=0.5):
         """Initialisation of the DeepLPF loss function
 
         :param ssim_window_size: size of averaging window for SSIM
@@ -41,6 +41,7 @@ class CURLLoss(nn.Module):
         super(CURLLoss, self).__init__()
         self.alpha = alpha
         self.ssim_window_size = ssim_window_size
+        self.device = device
 
     def create_window(self, window_size, num_channel):
         """Window creation function for SSIM metric. Gaussian weights are applied to the window.
@@ -108,13 +109,13 @@ class CURLLoss(nn.Module):
         C1 = 0.01 ** 2
         C2 = 0.03 ** 2
 
-        ssim_map1 = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2))
-        ssim_map2 = ((mu1_sq.cuda() + mu2_sq.cuda() + C1) *
-                     (sigma1_sq.cuda() + sigma2_sq.cuda() + C2))
-        ssim_map = ssim_map1.cuda() / ssim_map2.cuda()
+        ssim_map1 = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) ###
+        ssim_map2 = ((mu1_sq.to(self.device) + mu2_sq.to(self.device) + C1) *
+                     (sigma1_sq.to(self.device) + sigma2_sq.to(self.device) + C2))
+        ssim_map = ssim_map1.to(self.device) / ssim_map2.to(self.device)
 
-        v1 = 2.0 * sigma12.cuda() + C2
-        v2 = sigma1_sq.cuda() + sigma2_sq.cuda() + C2
+        v1 = 2.0 * sigma12.to(self.device) + C2
+        v2 = sigma1_sq.to(self.device) + sigma2_sq.to(self.device) + C2
         cs = torch.mean(v1 / v2)
 
         return ssim_map.mean(), cs
@@ -141,7 +142,7 @@ class CURLLoss(nn.Module):
                        img1.ndim)
 
         device = img1.device
-        weights = torch.FloatTensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333]).to(device)
+        weights = torch.FloatTensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333]).to(self.device) ###
         levels = weights.size()[0]
         ssims = []
         mcs = []
@@ -183,31 +184,34 @@ class CURLLoss(nn.Module):
         num_images = target_img_batch.shape[0]
         target_img_batch = target_img_batch
 
-        ssim_loss_value = Variable(
-            torch.cuda.FloatTensor(torch.zeros(1, 1).cuda()))
-        l1_loss_value = Variable(
-            torch.cuda.FloatTensor(torch.zeros(1, 1).cuda()))
-        cosine_rgb_loss_value = Variable(
-            torch.cuda.FloatTensor(torch.zeros(1, 1).cuda()))
-        hsv_loss_value = Variable(
-            torch.cuda.FloatTensor(torch.zeros(1, 1).cuda()))
-        rgb_loss_value = Variable(
-            torch.cuda.FloatTensor(torch.zeros(1, 1).cuda()))
+        ssim_loss_value = torch.zeros(1, 1).to(self.device) ###
+        l1_loss_value = torch.zeros(1, 1).to(self.device) ###
+        cosine_rgb_loss_value = torch.zeros(1, 1).to(self.device) ###
+        hsv_loss_value = torch.zeros(1, 1).to(self.device) ###
+        rgb_loss_value = torch.zeros(1, 1).to(self.device) ###
+        # l1_loss_value = Variable(
+        #     torch.cuda.FloatTensor(torch.zeros(1, 1).to(self.device))) ###
+        # cosine_rgb_loss_value = Variable(
+        #     torch.cuda.FloatTensor(torch.zeros(1, 1).to(self.device))) ###
+        # hsv_loss_value = Variable(
+        #     torch.cuda.FloatTensor(torch.zeros(1, 1).to(self.device))) ###
+        # rgb_loss_value = Variable(
+        #     torch.cuda.FloatTensor(torch.zeros(1, 1).to(self.device))) ###
 
         for i in range(0, num_images):
 
-            target_img = target_img_batch[i, :, :, :].cuda()
-            predicted_img = predicted_img_batch[i, :, :, :].cuda()
+            target_img = target_img_batch[i, :, :, :].to(self.device) ###
+            predicted_img = predicted_img_batch[i, :, :, :].to(self.device) ###
 
             predicted_img_lab = torch.clamp(
-                ImageProcessing.rgb_to_lab(predicted_img.squeeze(0)), 0, 1)
+                ImageProcessing.rgb_to_lab(predicted_img.squeeze(0), device=self.device), 0, 1)
             target_img_lab = torch.clamp(
-                ImageProcessing.rgb_to_lab(target_img.squeeze(0)), 0, 1)
+                ImageProcessing.rgb_to_lab(target_img.squeeze(0), device=self.device), 0, 1)
 
             target_img_hsv = torch.clamp(ImageProcessing.rgb_to_hsv(
-                target_img), 0, 1)
+                target_img, device=self.device), 0, 1)
             predicted_img_hsv = torch.clamp(ImageProcessing.rgb_to_hsv(
-                predicted_img.squeeze(0)), 0, 1)
+                predicted_img.squeeze(0), device=self.device), 0, 1)
 
             predicted_img_hue = (predicted_img_hsv[0, :, :]*2*math.pi)
             predicted_img_val = predicted_img_hsv[2, :, :]
@@ -263,7 +267,7 @@ class CURLLayer(nn.Module):
 
     import torch.nn.functional as F
 
-    def __init__(self, num_in_channels=64, num_out_channels=64):
+    def __init__(self, device='cpu', num_in_channels=64, num_out_channels=64):
         """Initialisation of class
 
         :param num_in_channels: number of input channels
@@ -277,6 +281,7 @@ class CURLLayer(nn.Module):
         self.num_in_channels = num_in_channels
         self.num_out_channels = num_out_channels
         self.make_init_network()
+        self.device = device
 
     def make_init_network(self):
         """ Initialise the CURL block layers
@@ -344,7 +349,7 @@ class CURLLayer(nn.Module):
 
         img_clamped = torch.clamp(img, 0, 1)
         img_lab = torch.clamp(ImageProcessing.rgb_to_lab(
-            img_clamped.squeeze(0)), 0, 1)
+            img_clamped.squeeze(0), device=self.device), 0, 1)
 
         feat_lab = torch.cat((feat, img_lab.unsqueeze(0)), 1)
 
@@ -362,10 +367,9 @@ class CURLLayer(nn.Module):
         L = self.fc_lab(x)
 
         img_lab, gradient_regulariser_lab = ImageProcessing.adjust_lab(
-            img_lab.squeeze(0), L[0, 0:48])
-        img_rgb = ImageProcessing.lab_to_rgb(img_lab.squeeze(0))
+            img_lab.squeeze(0), L[0, 0:48], device=self.device)
+        img_rgb = ImageProcessing.lab_to_rgb(img_lab.squeeze(0), device=self.device)
         img_rgb = torch.clamp(img_rgb, 0, 1)
-
         feat_rgb = torch.cat((feat, img_rgb.unsqueeze(0)), 1)
 
         x = self.rgb_layer1(feat_rgb)
@@ -381,10 +385,10 @@ class CURLLayer(nn.Module):
         R = self.fc_rgb(x)
 
         img_rgb, gradient_regulariser_rgb = ImageProcessing.adjust_rgb(
-            img_rgb.squeeze(0), R[0, 0:48])
+            img_rgb.squeeze(0), R[0, 0:48], device=self.device)
         img_rgb = torch.clamp(img_rgb, 0, 1)
 
-        img_hsv = ImageProcessing.rgb_to_hsv(img_rgb.squeeze(0))
+        img_hsv = ImageProcessing.rgb_to_hsv(img_rgb.squeeze(0), device=self.device)
         img_hsv = torch.clamp(img_hsv, 0, 1)
         feat_hsv = torch.cat((feat, img_hsv.unsqueeze(0)), 1)
 
@@ -402,18 +406,18 @@ class CURLLayer(nn.Module):
         H = self.fc_hsv(x)
 
         img_hsv, gradient_regulariser_hsv = ImageProcessing.adjust_hsv(
-            img_hsv, H[0, 0:64])
+            img_hsv, H[0, 0:64], device=self.device)
         img_hsv = torch.clamp(img_hsv, 0, 1)
 
         img_residual = torch.clamp(ImageProcessing.hsv_to_rgb(
-           img_hsv.squeeze(0)), 0, 1)
+            img_hsv.squeeze(0)), 0, 1)
 
         img = torch.clamp(img + img_residual.unsqueeze(0), 0, 1)
 
         gradient_regulariser = gradient_regulariser_rgb + \
             gradient_regulariser_lab+gradient_regulariser_hsv
 
-        return img, gradient_regulariser
+        return img, gradient_regulariser, L, R, H
 
 
 class Block(nn.Module):
@@ -438,7 +442,7 @@ class Block(nn.Module):
 
         """
         return nn.Conv2d(in_channels, out_channels, kernel_size=3,
-                         stride=stride, padding=1, bias=True)
+                        stride=stride, padding=1, bias=True)
 
 
 class ConvBlock(Block, nn.Module):
@@ -521,7 +525,7 @@ class GlobalPoolingBlock(Block, nn.Module):
 
 class CURLNet(nn.Module):
 
-    def __init__(self):
+    def __init__(self, device='cpu'):
         """Initialisation function
 
         :returns: initialises parameters of the neural networ
@@ -529,8 +533,9 @@ class CURLNet(nn.Module):
 
         """
         super(CURLNet, self).__init__()
+        self.device = device
         self.tednet = rgb_ted.TEDModel()
-        self.curllayer = CURLLayer()
+        self.curllayer = CURLLayer(device=self.device)
 
     def forward(self, img):
         """Neural network forward function
@@ -541,5 +546,5 @@ class CURLNet(nn.Module):
 
         """
         feat = self.tednet(img)
-        img, gradient_regulariser = self.curllayer(feat)
-        return img, gradient_regulariser
+        img, gradient_regulariser, L, R, H = self.curllayer(feat)
+        return img, gradient_regulariser, L, R, H
